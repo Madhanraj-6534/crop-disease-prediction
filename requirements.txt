@@ -1,8 +1,7 @@
-streamlit
-numpy
+streamlit==1.36.0
+numpy==1.26.4
 pillow
-tensorflow
+tensorflow==2.15.1
 gtts
 requests
 reportlab
-googletrans==4.0.0-rc1
