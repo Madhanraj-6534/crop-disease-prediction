@@ -21,17 +21,32 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 import streamlit as st
 from PIL        import Image
 from gtts       import gTTS
-from googletrans import Translator
 from reportlab.platypus   import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import letter
 
+try:
+    from googletrans import Translator as _Translator
+    _translator = _Translator()
+    _GOOGLETRANS_AVAILABLE = True
+except Exception:
+    _translator = None
+    _GOOGLETRANS_AVAILABLE = False
+
+
+def safe_translate(text: str, dest: str = "ta") -> str:
+    if not _GOOGLETRANS_AVAILABLE or _translator is None:
+        return text
+    try:
+        result = _translator.translate(text, dest=dest)
+        return result.text if result and result.text else text
+    except Exception:
+        return text
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS & LOOKUP TABLES
 # ══════════════════════════════════════════════════════════════════════════════
-translator = Translator()
-
-
 TAMIL_MAP = {
     "Tomato — Early Blight": "தக்காளி - ஆரம்ப இலை நோய்",
     "Tomato — Late Blight" : "தக்காளி - கடைசி இலை நோய்",
@@ -209,7 +224,6 @@ def severity_badge(severity: str) -> str:
     return f'<span class="badge {colour}">{severity}</span>'
 
 
-# ── FEATURE 3 — Build MP3 bytes in memory (no disk file needed) ───────────────
 def build_voice_mp3(text: str, lang_code: str = "en") -> bytes:
     """Convert text to MP3 bytes using gTTS. Returns raw bytes."""
     tts = gTTS(text=text, lang=lang_code)
@@ -264,8 +278,6 @@ def generate_pdf(disease_name, confidence, cause, treatment, image, lang="Englis
     return buffer
 
 
-
-# ── FEATURE 2 — Render location-based advice ──────────────────────────────────
 def show_location_advice(location: str, lang: str):
     advice_list = LOCATION_ADVICE.get(location, {}).get(
         "ta" if lang == "Tamil" else "en", []
@@ -293,7 +305,6 @@ def load_model():
 st.sidebar.title("🌾 Farmer Menu")
 lang = st.sidebar.selectbox("🌐 Language / மொழி", ["English", "Tamil"])
 
-# FEATURE 2 — Location selector in sidebar
 location_label = "📍 உங்கள் இடம்" if lang == "Tamil" else "📍 Your Location"
 user_location  = st.sidebar.selectbox(location_label, list(LOCATION_ADVICE.keys()))
 
@@ -332,10 +343,7 @@ with st.sidebar:
         with st.expander(crop):
             for d in diseases:
                 if lang == "Tamil":
-                    try:
-                        d = translator.translate(d, dest="ta").text
-                    except Exception:
-                        pass
+                    d = safe_translate(d, dest="ta")
                 st.write(f"• {d}")
 
     st.divider()
@@ -362,9 +370,6 @@ padding:20px;border-radius:10px;color:white;margin-bottom:1rem'>
 </div>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# FEATURE 2 : Location Smart Advice
-# ─────────────────────────────────────────────────────────────────────────────
 show_location_advice(user_location, lang)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -436,7 +441,6 @@ if image is not None:
     conf         = result.get("confidence", 0.0)
     info         = result.get("disease_info", DISEASE_INFO.get(disease_name, {}))
 
-    # Safe fallbacks so no KeyError later
     info.setdefault("cause",      "No data available")
     info.setdefault("symptoms",   "No data available")
     info.setdefault("prevention", "Practice good hygiene and crop rotation")
@@ -445,7 +449,6 @@ if image is not None:
 
     tamil_name = TAMIL_MAP.get(disease_name, disease_name)
 
-    # ── Image + Result columns ────────────────────────────────────────────────
     col_img, col_res = st.columns([1, 1], gap="large")
 
     with col_img:
@@ -466,7 +469,6 @@ if image is not None:
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Confidence bar
         conf_col = "#3a8f5c" if conf >= 70 else ("#e07b39" if conf >= 45 else "#c0392b")
         conf_lbl = TAMIL_UI["confidence"] if lang == "Tamil" else "Confidence"
         st.markdown(f"**{conf_lbl}: {conf:.1f}%**")
@@ -485,14 +487,11 @@ if image is not None:
         else:
             st.error("🔴 Low Confidence"      if lang == "English" else "🔴 குறைந்த நம்பிக்கை")
 
-        # Inline speak button
         if st.button("🔊 Speak Full Info"):
             try:
                 if lang == "Tamil":
-                    c_ta = translator.translate(info["cause"], dest="ta").text
-                    t_ta = " ".join(
-                        translator.translate(t, dest="ta").text for t in info["treatment"]
-                    )
+                    c_ta = safe_translate(info["cause"], dest="ta")
+                    t_ta = " ".join(safe_translate(t, dest="ta") for t in info["treatment"])
                     speak_inline(
                         f"இந்த இலைக்கு {tamil_name} நோய் உள்ளது. காரணம் {c_ta}. தீர்வு {t_ta}",
                         lang_code="ta",
@@ -507,7 +506,6 @@ if image is not None:
             except Exception as e:
                 st.warning(f"Voice playback failed: {e}")
 
-    # ── PDF download ──────────────────────────────────────────────────────────
     pdf_buf = generate_pdf(disease_name, conf, info["cause"], info["treatment"], image, lang)
     st.download_button(
         label    = "📄 Download Full Report" if lang == "English" else "📄 அறிக்கையை பதிவிறக்கவும்",
@@ -516,9 +514,6 @@ if image is not None:
         mime     = "application/pdf",
     )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # FEATURE 3 : Voice Report Download (MP3)
-    # ─────────────────────────────────────────────────────────────────────────
     st.markdown(
         '<p class="section-title">🎙️ ' +
         ("குரல் அறிக்கை" if lang == "Tamil" else "Voice Report") +
@@ -527,10 +522,8 @@ if image is not None:
     )
     try:
         if lang == "Tamil":
-            c_ta      = translator.translate(info["cause"], dest="ta").text
-            t_ta      = " ".join(
-                translator.translate(t, dest="ta").text for t in info["treatment"]
-            )
+            c_ta      = safe_translate(info["cause"], dest="ta")
+            t_ta      = " ".join(safe_translate(t, dest="ta") for t in info["treatment"])
             voice_txt = (
                 f"பயிர் நோய் அறிக்கை. "
                 f"நோய்: {tamil_name}. "
@@ -549,7 +542,6 @@ if image is not None:
             )
             mp3_bytes = build_voice_mp3(voice_txt, lang_code="en")
 
-        # Download button
         st.download_button(
             label    = "⬇️ Download Voice Report (MP3)"
                        if lang == "English" else
@@ -558,13 +550,11 @@ if image is not None:
             file_name= "crop_voice_report.mp3",
             mime     = "audio/mp3",
         )
-        # Also play inline so farmer can hear it immediately
         st.audio(mp3_bytes, format="audio/mp3")
 
     except Exception as e:
         st.warning(f"Voice report generation failed: {e}")
 
-    # ── WhatsApp share ────────────────────────────────────────────────────────
     message = (
         f"🌿 Crop Disease Report\n\n"
         f"Disease: {disease_name}\nConfidence: {conf:.1f}%\n\n"
@@ -575,7 +565,6 @@ if image is not None:
     whatsapp_url = f"https://wa.me/?text={urllib.parse.quote(message)}"
     st.markdown(f"[📤 Share via WhatsApp]({whatsapp_url})")
 
-    # ── Diagnosis / Treatment / Top-3 Tabs ───────────────────────────────────
     st.divider()
     if lang == "Tamil":
         tab1, tab2, tab3 = st.tabs(["🔍 கண்டறிதல்", "💊 சிகிச்சை", "📊 கணிப்புகள்"])
@@ -588,11 +577,9 @@ if image is not None:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             if lang == "Tamil":
                 st.markdown("**🌿 காரணம்**")
-                try:    st.write(translator.translate(info["cause"], dest="ta").text)
-                except: st.write(info["cause"])
+                st.write(safe_translate(info["cause"], dest="ta"))
                 st.markdown("**📄 அறிகுறிகள்**")
-                try:    st.write(translator.translate(info["symptoms"], dest="ta").text)
-                except: st.write(info["symptoms"])
+                st.write(safe_translate(info["symptoms"], dest="ta"))
             else:
                 st.markdown("**🌿 Cause**");    st.write(info["cause"])
                 st.markdown("**📄 Symptoms**"); st.write(info["symptoms"])
@@ -602,8 +589,7 @@ if image is not None:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             if lang == "Tamil":
                 st.markdown("**🛡️ தடுப்பு**")
-                try:    st.write(translator.translate(info["prevention"], dest="ta").text)
-                except: st.write(info["prevention"])
+                st.write(safe_translate(info["prevention"], dest="ta"))
             else:
                 st.markdown("**🛡️ Prevention**"); st.write(info["prevention"])
             st.markdown("</div>", unsafe_allow_html=True)
@@ -618,8 +604,7 @@ if image is not None:
         for i, step in enumerate(info["treatment"], 1):
             disp = step
             if lang == "Tamil":
-                try:    disp = translator.translate(step, dest="ta").text
-                except: pass
+                disp = safe_translate(step, dest="ta")
             steps_html += (
                 f'<div class="step-item">'
                 f'<div class="step-num">{i}</div>'
@@ -640,7 +625,6 @@ if image is not None:
             st.progress(min(conf_val / 100.0, 1.0))
 
 else:
-    # ── No image uploaded ─────────────────────────────────────────────────────
     st.markdown("""
     <div class="card" style="text-align:center; padding:3rem 2rem;">
         <div style="font-size:4rem; margin-bottom:1rem;">🌿</div>
