@@ -1,8 +1,10 @@
 streamlit
-numpy
+tensorflow==2.15.0
+numpy==1.26.4
+pandas
 pillow
-tensorflow-cpu==2.15.0
+opencv-python-headless
+scikit-learn
 gtts
 requests
-reportlab
-googletrans==4.0.0rc1
+googletrans==4.0.0-rc1
